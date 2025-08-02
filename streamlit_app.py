@@ -15,7 +15,7 @@ symbols = {
 
 # 顯示標題
 st.title("📈 加密貨幣分析助手（Beta）")
-st.write("分析週期：**1 小時**｜追蹤幣種：BTC / ETH / SOL")
+st.write("分析週期：**1 分鐘**｜追蹤幣種：BTC / ETH / SOL")
 
 # 設定香港時區
 hk_tz = pytz.timezone('Asia/Hong_Kong')
