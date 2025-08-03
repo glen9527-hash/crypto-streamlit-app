@@ -3,7 +3,31 @@ import requests
 import pandas as pd
 from datetime import datetime
 import pytz
+import requests
+import pandas as pd
+from datetime import datetime, timedelta
 
+def fetch_hourly_data(coin_id, vs_currency='usd', hours=24):
+    try:
+        end_time = int(datetime.utcnow().timestamp())
+        start_time = end_time - hours * 3600
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart/range"
+        params = {
+            'vs_currency': vs_currency,
+            'from': start_time,
+            'to': end_time
+        }
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        prices = response.json()['prices']
+        df = pd.DataFrame(prices, columns=['timestamp', 'price'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        df = df.resample('1H').mean().dropna()
+        return df
+    except Exception as e:
+        st.error(f"獲取 {coin_id} 歷史數據失敗：{e}")
+        return None
 # 設定頁面標題與基本配置
 st.set_page_config(page_title="加密貨幣分析助手", layout="centered")
 st.title("📈 加密貨幣分析助手（Beta）")
