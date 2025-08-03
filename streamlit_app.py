@@ -1,123 +1,85 @@
 import streamlit as st
-import requests
 import pandas as pd
+import numpy as np
+import datetime
 import pytz
-from datetime import datetime
-import ta
+from binance.client import Client
+from ta.trend import SMAIndicator, EMAIndicator, MACD
+from ta.momentum import RSIIndicator
+from ta.volatility import BollingerBands
 
-st.set_page_config(page_title="📈 加密貨幣分析助手", layout="wide")
-st.title("📈 加密貨幣分析助手（Beta）")
-st.markdown("分析週期：1小時｜追蹤幣種：**BTC / ETH / SOL**")
+# Binance API 凭证（仅本地测试时使用）
+API_KEY = "TW9RoJwf2EP2jIhm8h0NJtqBNxDnbo6lGMBfyalYkm4B2bqU0QmddRHGXaSEaY1J"
+API_SECRET = "u7g7ZahxwAbuMvDtWbsBx4QXVBkqjsSpTfFKKl7GrQk7PE7p8qJ7VZSRXJiBSF7S"
 
-# 顯示香港時間
-hk_time = datetime.now(pytz.timezone("Asia/Hong_Kong")).strftime("%Y-%m-%d %H:%M:%S")
-st.markdown(f"更新時間（香港）：{hk_time}")
+# 初始化 Binance 客户端
+client = Client(API_KEY, API_SECRET)
 
-# 幣種對應的 CoinGecko ID
-coin_ids = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana"
+# 支持的币种
+symbols = {
+    'BTC': 'BTCUSDT',
+    'ETH': 'ETHUSDT',
+    'SOL': 'SOLUSDT'
 }
 
-# 獲取 CoinGecko 小時價格資料
-def fetch_hourly_data(coin_id):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {
-        "vs_currency": "usd",
-        "days": "1",
-        "interval": "hourly"
-    }
+st.title("📈 加密貨幣合約分析（基礎版）")
+st.write("自動獲取價格、分析技術指標並給出買賣建議")
 
+# 设定时区为香港时间
+hk_tz = pytz.timezone("Asia/Hong_Kong")
+now = datetime.datetime.now(hk_tz)
+st.write("當前香港時間：", now.strftime("%Y-%m-%d %H:%M:%S"))
+
+# 分析每个币种
+for name, symbol in symbols.items():
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        prices = data["prices"]
-        df = pd.DataFrame(prices, columns=["timestamp", "price"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        return df
+        # 获取历史K线数据（1小时，过去24条）
+        klines = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1HOUR, limit=24)
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'num_trades',
+            'taker_buy_base', 'taker_buy_quote', 'ignore'
+        ])
+        df['close'] = pd.to_numeric(df['close'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+
+        # 计算常用技术指标
+        df['SMA20'] = SMAIndicator(df['close'], window=20).sma_indicator()
+        df['EMA20'] = EMAIndicator(df['close'], window=20).ema_indicator()
+        df['RSI'] = RSIIndicator(df['close'], window=14).rsi()
+        macd = MACD(df['close'])
+        df['MACD'] = macd.macd_diff()
+        bb = BollingerBands(df['close'], window=20)
+        df['BB_upper'] = bb.bollinger_hband()
+        df['BB_lower'] = bb.bollinger_lband()
+
+        # 当前价格
+        current_price = df['close'].iloc[-1]
+
+        # 简单规则建议（你可以替换为更复杂的逻辑）
+        latest_rsi = df['RSI'].iloc[-1]
+        latest_macd = df['MACD'].iloc[-1]
+        price = df['close'].iloc[-1]
+        sma = df['SMA20'].iloc[-1]
+        ema = df['EMA20'].iloc[-1]
+
+        # 计算建议概率（示例算法）
+        score = 0
+        if price > sma: score += 1
+        if price > ema: score += 1
+        if latest_macd > 0: score += 1
+        if latest_rsi < 30: score += 1
+        elif latest_rsi > 70: score -= 1
+
+        probability = round((score + 1) / 5 * 100, 2)
+        suggestion = "買入" if probability > 60 else "賣出" if probability < 40 else "觀望"
+
+        # 展示結果
+        st.subheader(f"📊 {name}")
+        st.write(f"當前價格：${current_price:.2f}")
+        st.write(f"買入建議概率：{probability}%")
+        st.line_chart(df[['close', 'SMA20', 'EMA20']].dropna())
 
     except Exception as e:
-        st.error(f"{coin_id.upper()} 歷史數據獲取錯誤：{e}")
-        return None
-
-# 分析技術指標與建議
-def analyze_indicators(df):
-    result = {}
-
-    df["SMA20"] = ta.trend.sma_indicator(df["price"], window=20)
-    df["EMA20"] = ta.trend.ema_indicator(df["price"], window=20)
-    df["RSI"] = ta.momentum.rsi(df["price"], window=14)
-    macd = ta.trend.macd(df["price"])
-    df["MACD"] = macd.macd()
-    df["MACD_signal"] = macd.macd_signal()
-    bb = ta.volatility.BollingerBands(df["price"])
-    df["BB_upper"] = bb.bollinger_hband()
-    df["BB_lower"] = bb.bollinger_lband()
-
-    last = df.iloc[-1]
-
-    # 簡單邏輯生成建議
-    score = 0
-    explanation = []
-
-    # RSI
-    if last["RSI"] < 30:
-        score += 1
-        explanation.append("RSI < 30（超賣）")
-    elif last["RSI"] > 70:
-        score -= 1
-        explanation.append("RSI > 70（超買）")
-
-    # MACD
-    if last["MACD"] > last["MACD_signal"]:
-        score += 1
-        explanation.append("MACD 多頭")
-    else:
-        score -= 1
-        explanation.append("MACD 空頭")
-
-    # 價格 vs SMA
-    if last["price"] > last["SMA20"]:
-        score += 1
-        explanation.append("價格高於 SMA20")
-    else:
-        score -= 1
-        explanation.append("價格低於 SMA20")
-
-    # 價格是否突破布林帶
-    if last["price"] < last["BB_lower"]:
-        score += 1
-        explanation.append("價格低於布林下軌")
-    elif last["price"] > last["BB_upper"]:
-        score -= 1
-        explanation.append("價格高於布林上軌")
-
-    # 分數轉換為建議
-    if score >= 2:
-        suggestion = "✅ 建議：**買入**（機率：約 70%）"
-    elif score <= -2:
-        suggestion = "❌ 建議：**賣出**（機率：約 70%）"
-    else:
-        suggestion = "⚠️ 建議：**觀望**（機率：約 50%）"
-
-    result["score"] = score
-    result["explanation"] = explanation
-    result["suggestion"] = suggestion
-    return result, df
-
-# 主體流程
-for symbol, coin_id in coin_ids.items():
-    with st.expander(f"🔍 {symbol} 分析結果"):
-        df = fetch_hourly_data(coin_id)
-        if df is not None:
-            result, df_with_indicators = analyze_indicators(df)
-            st.line_chart(df_with_indicators[["price", "SMA20", "EMA20"]].dropna(), height=300)
-            st.markdown("📊 技術指標說明：")
-            for line in result["explanation"]:
-                st.markdown(f"- {line}")
-            st.markdown(result["suggestion"])
-        else:
-            st.error(f"{symbol} 數據無法顯示")
+        st.error(f"{name} 數據獲取錯誤：{e}")
