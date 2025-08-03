@@ -1,2 +1,7 @@
 streamlit
 requests
+streamlit
+requests
+pandas
+matplotlib
+ta
