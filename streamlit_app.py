@@ -9,8 +9,8 @@ from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
 
 # Binance API 凭证（仅本地测试时使用）
-API_KEY = "TW9RoJwf2EP2jIhm8h0NJtqBNxDnbo6lGMBfyalYkm4B2bqU0QmddRHGXaSEaY1J"
-API_SECRET = "u7g7ZahxwAbuMvDtWbsBx4QXVBkqjsSpTfFKKl7GrQk7PE7p8qJ7VZSRXJiBSF7S"
+API_KEY = "oxEQsZIOIWNaaeE1t2ijC0PvE3ZgwBIDSnNQUyVcurRkb2zFm0iUaV2mf5B6VJ87"
+API_SECRET = "YzUffaESPPfWjexGsqXOG0oc3D91dBio1hVayr2lKRYcQReBL9LulTFlz2MXXotk"
 
 # 初始化 Binance 客户端
 client = Client(API_KEY, API_SECRET)
