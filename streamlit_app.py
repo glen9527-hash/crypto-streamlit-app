@@ -2,84 +2,106 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
-import pytz
 from binance.client import Client
-from ta.trend import SMAIndicator, EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from ta.volatility import BollingerBands
+from binance.exceptions import BinanceAPIException
+import plotly.graph_objs as go
 
-# Binance API 凭证（仅本地测试时使用）
-API_KEY = "oxEQsZIOIWNaaeE1t2ijC0PvE3ZgwBIDSnNQUyVcurRkb2zFm0iUaV2mf5B6VJ87"
-API_SECRET = "YzUffaESPPfWjexGsqXOG0oc3D91dBio1hVayr2lKRYcQReBL9LulTFlz2MXXotk"
+# 页面标题
+st.set_page_config(page_title="加密貨幣分析基礎版", layout="wide")
+st.title("📊 加密貨幣分析基礎版")
 
-# 初始化 Binance 客户端
-client = Client(API_KEY, API_SECRET)
+# 內嵌 Binance API Key（僅測試用）
+API_KEY = "6beNcnbZ5gQ9WslIW8xFcz9YsnpuzeFqvzTPzRUbp281K1pNkEqLsAWdjaNO8A72"
+API_SECRET = "qawLXPN4yJWOj0XvoJH5ncy3bXdC7bNlVPV1gxDDvdPeLehQk1mc3jDCWuJI2p62"
 
-# 支持的币种
-symbols = {
-    'BTC': 'BTCUSDT',
-    'ETH': 'ETHUSDT',
-    'SOL': 'SOLUSDT'
-}
+# 初始化 Binance 客戶端
+client = None
+try:
+    client = Client(API_KEY, API_SECRET)
+    client.ping()
+    st.success("✅ 成功連接 Binance API")
+except BinanceAPIException as e:
+    st.error("❌ Binance API 錯誤，請確認 Key 是否有效")
+    st.stop()
+except Exception as e:
+    st.error(f"❌ API 初始化失敗：{e}")
+    st.stop()
 
-st.title("📈 加密貨幣合約分析（基礎版）")
-st.write("自動獲取價格、分析技術指標並給出買賣建議")
+# 幣種與時間設定
+symbol = st.selectbox("選擇幣種", ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+interval = "1h"
+lookback_hours = 24
 
-# 设定时区为香港时间
-hk_tz = pytz.timezone("Asia/Hong_Kong")
-now = datetime.datetime.now(hk_tz)
-st.write("當前香港時間：", now.strftime("%Y-%m-%d %H:%M:%S"))
-
-# 分析每个币种
-for name, symbol in symbols.items():
+# 取得歷史K線數據
+def get_klines(symbol, interval, lookback):
     try:
-        # 获取历史K线数据（1小时，过去24条）
-        klines = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1HOUR, limit=24)
+        klines = client.get_klines(symbol=symbol, interval=interval, limit=lookback)
         df = pd.DataFrame(klines, columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'num_trades',
-            'taker_buy_base', 'taker_buy_quote', 'ignore'
+            "timestamp", "open", "high", "low", "close", "volume",
+            "close_time", "quote_asset_volume", "number_of_trades",
+            "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
         ])
-        df['close'] = pd.to_numeric(df['close'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-
-        # 计算常用技术指标
-        df['SMA20'] = SMAIndicator(df['close'], window=20).sma_indicator()
-        df['EMA20'] = EMAIndicator(df['close'], window=20).ema_indicator()
-        df['RSI'] = RSIIndicator(df['close'], window=14).rsi()
-        macd = MACD(df['close'])
-        df['MACD'] = macd.macd_diff()
-        bb = BollingerBands(df['close'], window=20)
-        df['BB_upper'] = bb.bollinger_hband()
-        df['BB_lower'] = bb.bollinger_lband()
-
-        # 当前价格
-        current_price = df['close'].iloc[-1]
-
-        # 简单规则建议（你可以替换为更复杂的逻辑）
-        latest_rsi = df['RSI'].iloc[-1]
-        latest_macd = df['MACD'].iloc[-1]
-        price = df['close'].iloc[-1]
-        sma = df['SMA20'].iloc[-1]
-        ema = df['EMA20'].iloc[-1]
-
-        # 计算建议概率（示例算法）
-        score = 0
-        if price > sma: score += 1
-        if price > ema: score += 1
-        if latest_macd > 0: score += 1
-        if latest_rsi < 30: score += 1
-        elif latest_rsi > 70: score -= 1
-
-        probability = round((score + 1) / 5 * 100, 2)
-        suggestion = "買入" if probability > 60 else "賣出" if probability < 40 else "觀望"
-
-        # 展示結果
-        st.subheader(f"📊 {name}")
-        st.write(f"當前價格：${current_price:.2f}")
-        st.write(f"買入建議概率：{probability}%")
-        st.line_chart(df[['close', 'SMA20', 'EMA20']].dropna())
-
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+        df = df[["open", "high", "low", "close", "volume"]].astype(float)
+        return df
     except Exception as e:
-        st.error(f"{name} 數據獲取錯誤：{e}")
+        st.error(f"❌ 獲取 K 線數據失敗：{e}")
+        return None
+
+df = get_klines(symbol, interval, lookback_hours)
+if df is None:
+    st.stop()
+
+# 添加技術指標
+def add_indicators(df):
+    df["SMA20"] = df["close"].rolling(window=20).mean()
+    df["EMA20"] = df["close"].ewm(span=20).mean()
+
+    delta = df["close"].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / avg_loss
+    df["RSI"] = 100 - (100 / (1 + rs))
+
+    exp1 = df["close"].ewm(span=12).mean()
+    exp2 = df["close"].ewm(span=26).mean()
+    df["MACD"] = exp1 - exp2
+    df["Signal"] = df["MACD"].ewm(span=9).mean()
+
+    df["Upper"] = df["close"].rolling(window=20).mean() + 2 * df["close"].rolling(window=20).std()
+    df["Lower"] = df["close"].rolling(window=20).mean() - 2 * df["close"].rolling(window=20).std()
+    return df
+
+df = add_indicators(df)
+
+# 買賣建議概率
+def generate_signal(df):
+    last = df.iloc[-1]
+    score = 0
+    if last["close"] > last["SMA20"]:
+        score += 1
+    if last["RSI"] < 30:
+        score += 1
+    if last["MACD"] > last["Signal"]:
+        score += 1
+    if last["close"] < last["Lower"]:
+        score += 1
+    buy_prob = round((score / 4) * 100, 2)
+    return buy_prob
+
+buy_probability = generate_signal(df)
+
+# 顯示圖表
+st.subheader(f"{symbol} - 最近 {lookback_hours} 小時價格走勢")
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=df.index, y=df["close"], mode='lines', name='收盤價'))
+fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"], mode='lines', name='SMA20'))
+fig.add_trace(go.Scatter(x=df.index, y=df["EMA20"], mode='lines', name='EMA20'))
+fig.update_layout(height=500)
+st.plotly_chart(fig, use_container_width=True)
+
+# 顯示買入建議概率
+st.metric(label="📈 買入建議概率", value=f"{buy_probability} %")
