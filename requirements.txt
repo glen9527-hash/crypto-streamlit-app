@@ -1,7 +1,5 @@
 streamlit
-pandas
-requests
-ta
-pytz
-plotly
 yfinance
+pandas
+numpy
+ta
