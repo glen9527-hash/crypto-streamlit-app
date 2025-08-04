@@ -11,8 +11,8 @@ st.set_page_config(page_title="加密貨幣分析基礎版", layout="wide")
 st.title("📊 加密貨幣分析基礎版")
 
 # 內嵌 Binance API Key（僅測試用）
-API_KEY = "sT2x41WY7G3ANAcFUA7hRV2lgWppCI0kFuTqkpTcpWk6ue2VIAq1BgNzXmwFJoQx"
-API_SECRET = "mpefxQi8YBTgc2LT9mzHGYIKe3mWNc2lAOl6ICboJ3AEnq9F8GmdMr6jCrnCpKrJ"
+API_KEY = sT2x41WY7G3ANAcFUA7hRV2lgWppCI0kFuTqkpTcpWk6ue2VIAq1BgNzXmwFJoQx
+API_SECRET = mpefxQi8YBTgc2LT9mzHGYIKe3mWNc2lAOl6ICboJ3AEnq9F8GmdMr6jCrnCpKrJ
 
 # 初始化 Binance 客戶端
 client = None
