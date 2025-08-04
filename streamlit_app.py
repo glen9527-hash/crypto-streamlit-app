@@ -1,83 +1,106 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
-import requests
+import numpy as np
 import datetime
 import pytz
-import plotly.graph_objects as go
 import ta
 
-st.set_page_config(page_title="📈 加密幣分析助手（CoinCap 測試版）", layout="wide")
-st.title("📈 加密幣分析助手（CoinCap 測試版）")
-st.caption("分析週期：1 小時｜追蹤幣種：BTC / ETH / SOL")
+# 设置页面标题
+st.set_page_config(page_title="加密货币技术分析", layout="wide")
 
-COINS = {
-    "bitcoin": "BTC",
-    "ethereum": "ETH",
-    "solana": "SOL"
+# 显示标题
+st.title("📊 加密货币技术分析基础版")
+st.markdown("分析周期：每小时 | 回看时间：24 小时 | 使用数据源：Yahoo Finance")
+
+# 设置香港时区
+hk_tz = pytz.timezone('Asia/Hong_Kong')
+now = datetime.datetime.now(hk_tz)
+st.write(f"香港时间：{now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+# 币种映射（Yahoo Finance）
+symbol_map = {
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+    "SOL": "SOL-USD"
 }
 
-def get_hk_time():
-    return datetime.datetime.now(pytz.timezone("Asia/Hong_Kong")).strftime("%Y-%m-%d %H:%M:%S")
-
-@st.cache_data(ttl=600)
-def get_history(coin_id):
-    url = f"https://api.coincap.io/v2/assets/{coin_id}/history"
-    params = {"interval": "h1"}
+def get_data_yfinance(symbol):
     try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        json = r.json()
-        data = json.get("data", [])
-        df = pd.DataFrame(data)
-        df["timestamp"] = pd.to_datetime(df["time"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        df["price"] = pd.to_numeric(df["priceUsd"])
-        return df[["price"]]
+        df = yf.download(
+            symbol_map[symbol],
+            period="1d",
+            interval="1h"
+        )
+        if df.empty:
+            return None, f"{symbol} 數據獲取錯誤：無數據"
+        df.dropna(inplace=True)
+        df.reset_index(inplace=True)
+        return df, None
     except Exception as e:
-        return str(e)
+        return None, f"{symbol} 數據獲取錯誤：{e}"
 
-def analyze(df):
-    df = df.copy()
-    df["sma"] = ta.trend.sma_indicator(df["price"], window=5)
-    df["ema"] = ta.trend.ema_indicator(df["price"], window=5)
-    df["rsi"] = ta.momentum.rsi(df["price"], window=14)
-    macd = ta.trend.macd(df["price"])
-    df["macd"] = macd.macd()
-    df["signal"] = macd.macd_signal()
-    bb = ta.volatility.BollingerBands(df["price"], window=20, window_dev=2)
-    df["bb_upper"] = bb.bollinger_hband()
-    df["bb_lower"] = bb.bollinger_lband()
+def calculate_indicators(df):
+    # 加入常用技術指標
+    df['SMA_12'] = ta.trend.sma_indicator(df['Close'], window=12)
+    df['EMA_12'] = ta.trend.ema_indicator(df['Close'], window=12)
+    df['RSI_14'] = ta.momentum.rsi(df['Close'], window=14)
+    macd = ta.trend.macd(df['Close'])
+    df['MACD'] = macd.macd_diff()
+    bb = ta.volatility.BollingerBands(df['Close'])
+    df['BB_bbm'] = bb.bollinger_mavg()
+    df['BB_bbh'] = bb.bollinger_hband()
+    df['BB_bbl'] = bb.bollinger_lband()
+    return df
 
-    last = df.iloc[-1]
-    score = 0; total = 5
+def generate_signal(df):
+    latest = df.iloc[-1]
 
-    if last["rsi"] < 30: score += 1
-    elif last["rsi"] > 70: score -= 1
-    score += 1 if last["macd"] > last["signal"] else -1
-    score += 1 if last["price"] > last["sma"] else -1
-    score += 1 if last["price"] > last["ema"] else -1
-    if last["price"] < last["bb_lower"]: score += 1
-    elif last["price"] > last["bb_upper"]: score -= 1
+    signals = []
 
-    buy_prob = max(0, min(1, (score + total) / (2 * total)))
-    return df, round(buy_prob * 100, 2)
+    # RSI 超买/超卖
+    if latest['RSI_14'] < 30:
+        signals.append("buy")
+    elif latest['RSI_14'] > 70:
+        signals.append("sell")
 
-def plot_df(df, symbol):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["price"], name="Price"))
-    fig.add_trace(go.Scatter(x=df.index, y=df["sma"], name="SMA"))
-    fig.add_trace(go.Scatter(x=df.index, y=df["ema"], name="EMA"))
-    fig.update_layout(title=f"{symbol} 價格與技術指標", xaxis_title="時間", yaxis_title="USD")
-    return fig
+    # MACD 正负判断
+    if latest['MACD'] > 0:
+        signals.append("buy")
+    elif latest['MACD'] < 0:
+        signals.append("sell")
 
-for cid, sym in COINS.items():
-    st.subheader(sym)
-    df = get_history(cid)
-    if isinstance(df, str):
-        st.error(f"{sym} 數據獲取錯誤：{df}")
-        continue
-    df2, prob = analyze(df)
-    st.plotly_chart(plot_df(df2, sym), use_container_width=True)
-    st.metric(label=f"{sym} 買入建議概率", value=f"{prob} %")
+    # 均线判断
+    if latest['EMA_12'] > latest['SMA_12']:
+        signals.append("buy")
+    else:
+        signals.append("sell")
 
-st.caption(f"最後更新時間（香港）: {get_hk_time()}")
+    # 布林带判断
+    if latest['Close'] < latest['BB_bbl']:
+        signals.append("buy")
+    elif latest['Close'] > latest['BB_bbh']:
+        signals.append("sell")
+
+    # 统计 buy vs sell
+    buy_count = signals.count("buy")
+    sell_count = signals.count("sell")
+    total = buy_count + sell_count
+    if total == 0:
+        return 0.5  # 中性
+    else:
+        return round(buy_count / total, 2)
+
+# 主体部分
+col1, col2, col3 = st.columns(3)
+for i, coin in enumerate(["BTC", "ETH", "SOL"]):
+    df, error = get_data_yfinance(coin)
+    with [col1, col2, col3][i]:
+        st.subheader(coin)
+        if error:
+            st.error(error)
+        else:
+            df = calculate_indicators(df)
+            prob = generate_signal(df)
+            st.write("買入建議概率：", f"{int(prob * 100)}%")
+            st.line_chart(df.set_index("Datetime")["Close"])
