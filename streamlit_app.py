@@ -1,106 +1,79 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import numpy as np
-import datetime
-import pytz
+import yfinance as yf
 import ta
+import datetime
 
-# 设置页面标题
-st.set_page_config(page_title="加密货币技术分析", layout="wide")
+# 页面设置
+st.set_page_config(page_title="Crypto 分析基础版", layout="wide")
+st.title("🔍 加密货币合约分析基础版")
+st.write("分析周期：每小时｜历史范围：过去 24 小时")
 
-# 显示标题
-st.title("📊 加密货币技术分析基础版")
-st.markdown("分析周期：每小时 | 回看时间：24 小时 | 使用数据源：Yahoo Finance")
-
-# 设置香港时区
-hk_tz = pytz.timezone('Asia/Hong_Kong')
-now = datetime.datetime.now(hk_tz)
-st.write(f"香港时间：{now.strftime('%Y-%m-%d %H:%M:%S')}")
-
-# 币种映射（Yahoo Finance）
+# 设定分析币种与映射
 symbol_map = {
     "BTC": "BTC-USD",
     "ETH": "ETH-USD",
     "SOL": "SOL-USD"
 }
 
-def get_data_yfinance(symbol):
+selected_symbols = ["BTC", "ETH", "SOL"]
+
+# 指标计算函数
+def calculate_indicators(df):
+    if df.empty or len(df) < 26:
+        return df, "历史数据不足，无法计算技术指标。"
+
+    df['SMA_12'] = ta.trend.SMAIndicator(close=df['Close'], window=12).sma_indicator()
+    df['EMA_12'] = ta.trend.EMAIndicator(close=df['Close'], window=12).ema_indicator()
+    df['RSI'] = ta.momentum.RSIIndicator(close=df['Close'], window=14).rsi()
+    macd = ta.trend.MACD(close=df['Close'])
+    df['MACD'] = macd.macd_diff()
+    bb = ta.volatility.BollingerBands(close=df['Close'])
+    df['BB_bbm'] = bb.bollinger_mavg()
+
+    return df.dropna(), None
+
+# 生成建议概率
+def generate_trade_signal(df):
+    last = df.iloc[-1]
+    score = 0
+    if last['Close'] > last['SMA_12']: score += 1
+    if last['Close'] > last['EMA_12']: score += 1
+    if last['RSI'] < 30: score += 1
+    if last['MACD'] > 0: score += 1
+    if last['Close'] < last['BB_bbm']: score += 1
+    buy_prob = round(score / 5 * 100, 2)
+    sell_prob = round(100 - buy_prob, 2)
+    return buy_prob, sell_prob
+
+# 获取历史数据
+@st.cache_data(ttl=3600)
+def get_data(symbol):
     try:
-        df = yf.download(
-            symbol_map[symbol],
-            period="1d",
-            interval="1h"
-        )
-        if df.empty:
-            return None, f"{symbol} 數據獲取錯誤：無數據"
-        df.dropna(inplace=True)
+        end = datetime.datetime.now()
+        start = end - datetime.timedelta(hours=24)
+        df = yf.download(symbol_map[symbol], start=start, end=end, interval='1h')
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
         df.reset_index(inplace=True)
         return df, None
     except Exception as e:
-        return None, f"{symbol} 數據獲取錯誤：{e}"
+        return pd.DataFrame(), str(e)
 
-def calculate_indicators(df):
-    # 加入常用技術指標
-    df['SMA_12'] = ta.trend.sma_indicator(df['Close'], window=12)
-    df['EMA_12'] = ta.trend.ema_indicator(df['Close'], window=12)
-    df['RSI_14'] = ta.momentum.rsi(df['Close'], window=14)
-    macd = ta.trend.macd(df['Close'])
-    df['MACD'] = macd.macd_diff()
-    bb = ta.volatility.BollingerBands(df['Close'])
-    df['BB_bbm'] = bb.bollinger_mavg()
-    df['BB_bbh'] = bb.bollinger_hband()
-    df['BB_bbl'] = bb.bollinger_lband()
-    return df
+# 主分析循环
+for sym in selected_symbols:
+    st.subheader(f"{sym} 分析")
+    df, err = get_data(sym)
+    if err or df.empty:
+        st.error(f"{sym} 数据无法获取｜错误：{err}")
+        continue
 
-def generate_signal(df):
-    latest = df.iloc[-1]
+    df, indicator_err = calculate_indicators(df)
+    if indicator_err:
+        st.warning(indicator_err)
+        continue
 
-    signals = []
+    buy_prob, sell_prob = generate_trade_signal(df)
 
-    # RSI 超买/超卖
-    if latest['RSI_14'] < 30:
-        signals.append("buy")
-    elif latest['RSI_14'] > 70:
-        signals.append("sell")
+    st.write(f"📈 买入建议概率：`{buy_prob}%` ｜ 📉 卖出建议概率：`{sell_prob}%`")
 
-    # MACD 正负判断
-    if latest['MACD'] > 0:
-        signals.append("buy")
-    elif latest['MACD'] < 0:
-        signals.append("sell")
-
-    # 均线判断
-    if latest['EMA_12'] > latest['SMA_12']:
-        signals.append("buy")
-    else:
-        signals.append("sell")
-
-    # 布林带判断
-    if latest['Close'] < latest['BB_bbl']:
-        signals.append("buy")
-    elif latest['Close'] > latest['BB_bbh']:
-        signals.append("sell")
-
-    # 统计 buy vs sell
-    buy_count = signals.count("buy")
-    sell_count = signals.count("sell")
-    total = buy_count + sell_count
-    if total == 0:
-        return 0.5  # 中性
-    else:
-        return round(buy_count / total, 2)
-
-# 主体部分
-col1, col2, col3 = st.columns(3)
-for i, coin in enumerate(["BTC", "ETH", "SOL"]):
-    df, error = get_data_yfinance(coin)
-    with [col1, col2, col3][i]:
-        st.subheader(coin)
-        if error:
-            st.error(error)
-        else:
-            df = calculate_indicators(df)
-            prob = generate_signal(df)
-            st.write("買入建議概率：", f"{int(prob * 100)}%")
-            st.line_chart(df.set_index("Datetime")["Close"])
+    st.line_chart(df.set_index("Datetime")[["Close"]])
