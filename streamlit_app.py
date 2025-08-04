@@ -1,39 +1,35 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import datetime
 from binance.client import Client
-from binance.exceptions import BinanceAPIException
-import plotly.graph_objs as go
+from datetime import datetime, timedelta
+import pandas as pd
+import pytz
+import time
+import numpy as np
 
-# 页面标题
-st.set_page_config(page_title="加密貨幣分析基礎版", layout="wide")
-st.title("📊 加密貨幣分析基礎版")
+# 设置 Binance API Key 和 Secret（测试用）
+API_KEY = "sT2x41WY7G3ANAcFUA7hRV2lgWppCI0kFuTqkpTcpWk6ue2VlAq1BgNzXmwFJoQx"
+API_SECRET = "mpefxQi8YBTgc2LT9mzHGYIKe3mWNc2lAOI6ICboJ3AEnq9F8GmdMr6jCrnCpKrJ"
 
-# 內嵌 Binance API Key（僅測試用）
-API_KEY = "6beNcnbZ5gQ9WslIW8xFcz9YsnpuzeFqvzTPzRUbp281K1pNkEqLsAWdjaNO8A72"
-API_SECRET = "qawLXPN4yJWOj0XvoJH5ncy3bXdC7bNlVPV1gxDDvdPeLehQk1mc3jDCWuJI2p62"
+# 初始化 Binance 客户端
+client = Client(API_KEY, API_SECRET)
 
-# 初始化 Binance 客戶端
-client = None
-try:
-    client = Client(API_KEY, API_SECRET)
-    client.ping()
-    st.success("✅ 成功連接 Binance API")
-except BinanceAPIException as e:
-    st.error("❌ Binance API 錯誤，請確認 Key 是否有效")
-    st.stop()
-except Exception as e:
-    st.error(f"❌ API 初始化失敗：{e}")
-    st.stop()
+# 设置香港时区
+hk_tz = pytz.timezone("Asia/Hong_Kong")
 
-# 幣種與時間設定
-symbol = st.selectbox("選擇幣種", ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
-interval = "1h"
-lookback_hours = 24
+# Streamlit 页面标题
+st.set_page_config(page_title="加密货币合约分析 - 基础版", layout="wide")
+st.title("📊 加密货币合约分析工具（基础版）")
 
-# 取得歷史K線數據
-def get_klines(symbol, interval, lookback):
+# 可选币种与时间周期
+symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+intervals = {"1小时": Client.KLINE_INTERVAL_1HOUR}
+
+selected_symbol = st.selectbox("选择币种", symbols)
+selected_interval = "1小时"
+interval = intervals[selected_interval]
+
+# 获取历史K线数据
+def get_klines(symbol, interval, lookback=24):
     try:
         klines = client.get_klines(symbol=symbol, interval=interval, limit=lookback)
         df = pd.DataFrame(klines, columns=[
@@ -41,67 +37,56 @@ def get_klines(symbol, interval, lookback):
             "close_time", "quote_asset_volume", "number_of_trades",
             "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
         ])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        df = df[["open", "high", "low", "close", "volume"]].astype(float)
-        return df
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize("UTC").dt.tz_convert(hk_tz)
+        df["close"] = df["close"].astype(float)
+        return df[["timestamp", "close"]]
     except Exception as e:
-        st.error(f"❌ 獲取 K 線數據失敗：{e}")
+        st.error(f"❌ 无法获取行情数据，请确认 API 是否有效。\n\n错误详情：{e}")
         return None
 
-df = get_klines(symbol, interval, lookback_hours)
-if df is None:
-    st.stop()
-
-# 添加技術指標
-def add_indicators(df):
-    df["SMA20"] = df["close"].rolling(window=20).mean()
-    df["EMA20"] = df["close"].ewm(span=20).mean()
-
+# 计算技术指标
+def calculate_indicators(df):
+    df["SMA_5"] = df["close"].rolling(window=5).mean()
+    df["SMA_10"] = df["close"].rolling(window=10).mean()
+    df["EMA_5"] = df["close"].ewm(span=5).mean()
+    df["EMA_10"] = df["close"].ewm(span=10).mean()
     delta = df["close"].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+    avg_gain = pd.Series(gain).rolling(window=14).mean()
+    avg_loss = pd.Series(loss).rolling(window=14).mean()
     rs = avg_gain / avg_loss
     df["RSI"] = 100 - (100 / (1 + rs))
-
-    exp1 = df["close"].ewm(span=12).mean()
-    exp2 = df["close"].ewm(span=26).mean()
-    df["MACD"] = exp1 - exp2
-    df["Signal"] = df["MACD"].ewm(span=9).mean()
-
-    df["Upper"] = df["close"].rolling(window=20).mean() + 2 * df["close"].rolling(window=20).std()
-    df["Lower"] = df["close"].rolling(window=20).mean() - 2 * df["close"].rolling(window=20).std()
     return df
 
-df = add_indicators(df)
-
-# 買賣建議概率
+# 综合买卖建议
 def generate_signal(df):
-    last = df.iloc[-1]
-    score = 0
-    if last["close"] > last["SMA20"]:
-        score += 1
-    if last["RSI"] < 30:
-        score += 1
-    if last["MACD"] > last["Signal"]:
-        score += 1
-    if last["close"] < last["Lower"]:
-        score += 1
-    buy_prob = round((score / 4) * 100, 2)
-    return buy_prob
+    try:
+        last_row = df.iloc[-1]
+        score = 0
+        if last_row["SMA_5"] > last_row["SMA_10"]:
+            score += 1
+        if last_row["EMA_5"] > last_row["EMA_10"]:
+            score += 1
+        if last_row["RSI"] < 30:
+            score += 1
+        elif last_row["RSI"] > 70:
+            score -= 1
+        probability = int((score + 1) * 33.3)
+        return max(0, min(100, probability))
+    except Exception as e:
+        st.error(f"❌ 生成信号失败：{e}")
+        return None
 
-buy_probability = generate_signal(df)
+# 主体逻辑
+df = get_klines(selected_symbol, interval)
+if df is not None:
+    df = calculate_indicators(df)
 
-# 顯示圖表
-st.subheader(f"{symbol} - 最近 {lookback_hours} 小時價格走勢")
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=df.index, y=df["close"], mode='lines', name='收盤價'))
-fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"], mode='lines', name='SMA20'))
-fig.add_trace(go.Scatter(x=df.index, y=df["EMA20"], mode='lines', name='EMA20'))
-fig.update_layout(height=500)
-st.plotly_chart(fig, use_container_width=True)
+    st.subheader("📈 当前行情走势（最近24小时）")
+    st.line_chart(df.set_index("timestamp")[["close", "SMA_5", "SMA_10", "EMA_5", "EMA_10"]])
 
-# 顯示買入建議概率
-st.metric(label="📈 買入建議概率", value=f"{buy_probability} %")
+    st.subheader("🧠 综合买卖建议（仅供参考）")
+    probability = generate_signal(df)
+    if probability is not None:
+        st.metric(label="买入建议概率", value=f"{probability}%")
