@@ -6,3 +6,8 @@ pandas
 matplotlib
 ta
 python-binance
+streamlit
+pandas
+numpy
+python-binance
+plotly
