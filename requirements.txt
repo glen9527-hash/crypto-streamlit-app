@@ -1,14 +1,6 @@
 streamlit
-requests
-streamlit
-requests
 pandas
-matplotlib
+requests
 ta
-python-binance
-streamlit
-pandas
-numpy
-python-binance
-plotly
 pytz
+plotly
