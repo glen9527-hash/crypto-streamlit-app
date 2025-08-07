@@ -29,21 +29,30 @@ intervals = {
 def calculate_indicators(df):
     close = df["Close"]
 
-    df['SMA_12'] = pd.Series(ta.trend.SMAIndicator(close=close, window=12).sma_indicator(), index=df.index)
-    df['EMA_12'] = pd.Series(ta.trend.EMAIndicator(close=close, window=12).ema_indicator(), index=df.index)
-    df['RSI'] = pd.Series(ta.momentum.RSIIndicator(close=close, window=14).rsi(), index=df.index)
+    df['SMA_12'] = pd.Series(
+        ta.trend.SMAIndicator(close=close, window=12).sma_indicator().to_numpy().flatten(),
+        index=df.index
+    )
+    df['EMA_12'] = pd.Series(
+        ta.trend.EMAIndicator(close=close, window=12).ema_indicator().to_numpy().flatten(),
+        index=df.index
+    )
+    df['RSI'] = pd.Series(
+        ta.momentum.RSIIndicator(close=close, window=14).rsi().to_numpy().flatten(),
+        index=df.index
+    )
 
     macd_ind = ta.trend.MACD(close=close)
-    df['MACD'] = pd.Series(macd_ind.macd(), index=df.index)
-    df['MACD_signal'] = pd.Series(macd_ind.macd_signal(), index=df.index)
+    df['MACD'] = pd.Series(macd_ind.macd().to_numpy().flatten(), index=df.index)
+    df['MACD_signal'] = pd.Series(macd_ind.macd_signal().to_numpy().flatten(), index=df.index)
 
     bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
-    df['BB_upper'] = pd.Series(bb.bollinger_hband(), index=df.index)
-    df['BB_lower'] = pd.Series(bb.bollinger_lband(), index=df.index)
+    df['BB_upper'] = pd.Series(bb.bollinger_hband().to_numpy().flatten(), index=df.index)
+    df['BB_lower'] = pd.Series(bb.bollinger_lband().to_numpy().flatten(), index=df.index)
 
     return df
 
-# 建议逻辑
+# 生成建议
 def generate_suggestion(df):
     latest = df.iloc[-1]
     suggestions = []
@@ -65,7 +74,7 @@ def generate_suggestion(df):
 
     return "，".join(suggestions)
 
-# 主分析
+# 显示分析
 def display_analysis(symbol, name, interval, period):
     try:
         df = yf.download(symbol, interval=interval, period=period)
@@ -85,7 +94,7 @@ def display_analysis(symbol, name, interval, period):
     except Exception as e:
         st.error(f"❌ 数据获取失败：{e}")
 
-# 主页面结构
+# 页面内容
 for symbol, name in symbols.items():
     st.markdown(f"## 💰 {name} 分析结果")
     for interval, (label, period) in intervals.items():
