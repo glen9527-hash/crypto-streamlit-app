@@ -1,108 +1,122 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import ta
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-import pytz
 import time
 
-st.set_page_config(page_title="加密货币分析", layout="wide")
+st.set_page_config(page_title="加密货币合约分析", layout="wide")
 
-def get_data(symbol, interval, period):
-    df = yf.download(tickers=symbol, interval=interval, period=period)
-    df = df.dropna()
-    df = df.reset_index()
-    df['Datetime'] = pd.to_datetime(df['Datetime']).dt.tz_localize(None)
-    return df
-
+# ================== 参数配置 ==================
+symbols = {
+    "BTC": ("BTC-USD", "比特币"),
+    "ETH": ("ETH-USD", "以太坊"),
+    "SOL": ("SOL-USD", "索拉纳")
+}
+intervals = {
+    "15分钟": ("15m", "0.5d"),
+    "1小时": ("1h", "1d"),
+    "4小时": ("1h", "4d"),
+    "24小时": ("1h", "7d")
+}
+# ================== 技术指标计算 ==================
 def calculate_indicators(df):
     close = df['Close']
     df['SMA_12'] = ta.trend.SMAIndicator(close=close, window=12).sma_indicator()
     df['EMA_12'] = ta.trend.EMAIndicator(close=close, window=12).ema_indicator()
     df['RSI'] = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-    df['MACD'] = ta.trend.MACD(close=close).macd_diff()
-    boll = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
-    df['Bollinger_Upper'] = boll.bollinger_hband()
-    df['Bollinger_Lower'] = boll.bollinger_lband()
+    macd = ta.trend.MACD(close=close)
+    df['MACD'] = macd.macd()
+    df['MACD_signal'] = macd.macd_signal()
+    bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
+    df['BB_upper'] = bb.bollinger_hband()
+    df['BB_lower'] = bb.bollinger_lband()
     return df
 
-def generate_signal(df):
+# ================== 建议分析 ==================
+def generate_suggestion(df):
     latest = df.iloc[-1]
     score = 0
     total = 0
 
+    # SMA & EMA 趋势
     if latest['Close'] > latest['SMA_12']:
         score += 1
     total += 1
-
     if latest['Close'] > latest['EMA_12']:
         score += 1
     total += 1
 
+    # RSI 判断
     if latest['RSI'] < 30:
-        score += 1
+        score += 1  # 超卖，可能买入机会
     elif latest['RSI'] > 70:
-        score -= 1
+        score -= 1  # 超买，可能卖出风险
     total += 1
 
-    if latest['MACD'] > 0:
+    # MACD 判断
+    if latest['MACD'] > latest['MACD_signal']:
         score += 1
-    else:
-        score -= 1
     total += 1
 
-    if latest['Close'] < latest['Bollinger_Lower']:
+    # 布林带判断
+    if latest['Close'] < latest['BB_lower']:
         score += 1
-    elif latest['Close'] > latest['Bollinger_Upper']:
+    elif latest['Close'] > latest['BB_upper']:
         score -= 1
     total += 1
 
-    probability = round((score / total + 1) / 2, 2)
-    return probability
+    # 计算概率
+    prob = round((score / total + 1) / 2 * 100, 2)  # 转换为 0~100%
+    return prob
 
-def display_analysis(symbol, name, interval, period):
-    df = get_data(symbol, interval, period)
-    df = calculate_indicators(df)
-    prob = generate_signal(df)
-    hk_time = datetime.utcnow() + timedelta(hours=8)
-    current_price = df['Close'].iloc[-1]
+# ================== 显示分析 ==================
+def display_analysis(symbol, name, interval_key, period):
+    st.subheader(f"💰 {name}（{interval_key}）")
+    yf_symbol, _ = symbols[symbol]
+    interval, lookback = intervals[interval_key]
 
-    st.subheader(f"💰 {name} 分析結果")
-    st.markdown(f"**當前香港時間：** {hk_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    st.markdown(f"**最新價格：** ${current_price:.2f}")
-    st.markdown(f"**買入建議機率：** {prob * 100:.1f}%")
+    try:
+        df = yf.download(yf_symbol, interval=interval, period=lookback)
+        if df.empty:
+            st.warning("⚠️ 无法获取数据。")
+            return
 
-    fig, ax = plt.subplots()
-    ax.plot(df['Datetime'], df['Close'], label='Close Price')
-    ax.plot(df['Datetime'], df['SMA_12'], label='SMA 12')
-    ax.plot(df['Datetime'], df['EMA_12'], label='EMA 12')
-    ax.set_title(f"{name} 價格走勢")
-    ax.legend()
-    st.pyplot(fig)
+        df = df.dropna()
+        df = calculate_indicators(df)
+        suggestion = generate_suggestion(df)
+        latest_price = df['Close'].iloc[-1]
 
-coins = {
-    "BTC-USD": "Bitcoin",
-    "ETH-USD": "Ethereum",
-    "SOL-USD": "Solana"
-}
+        st.metric(label="📊 最新价格", value=f"${latest_price:.2f}")
+        st.metric(label="🧠 买入建议概率", value=f"{suggestion:.2f} %")
 
-intervals = {
-    "15分钟": ("15m", "1d"),
-    "1小时": ("1h", "2d"),
-    "4小时": ("1h", "7d"),
-    "24小时": ("1h", "30d")
-}
+        fig, ax = plt.subplots()
+        ax.plot(df.index, df['Close'], label='价格')
+        ax.plot(df.index, df['SMA_12'], label='SMA_12')
+        ax.plot(df.index, df['EMA_12'], label='EMA_12')
+        ax.fill_between(df.index, df['BB_lower'], df['BB_upper'], color='gray', alpha=0.2, label='布林带')
+        ax.legend()
+        st.pyplot(fig)
 
-selected_interval = st.selectbox("選擇分析週期", list(intervals.keys()), index=1)
+    except Exception as e:
+        st.error(f"❌ 数据获取失败：{str(e)}")
 
-refresh_interval = 60 * 15  # 15分鐘
-last_refresh = st.session_state.get("last_refresh", 0)
-now = time.time()
+# ================== 自动刷新 & 主体 ==================
+placeholder = st.empty()
+refresh_interval = 15 * 60  # 15 分钟
 
-if now - last_refresh > refresh_interval:
-    st.session_state["last_refresh"] = now
+while True:
+    with placeholder.container():
+        st.title("📈 加密货币多周期合约分析")
 
-for symbol, name in coins.items():
-    interval, period = intervals[selected_interval]
-    display_analysis(symbol, name, interval, period)
+        for symbol, (yf_symbol, name) in symbols.items():
+            st.markdown(f"## 🔹 {name}（{symbol}）")
+            cols = st.columns(2)
+            for idx, (interval_key, (interval, lookback)) in enumerate(intervals.items()):
+                with cols[idx % 2]:
+                    display_analysis(symbol, name, interval_key, lookback)
+
+        st.info(f"⏳ 页面将在 15 分钟后自动刷新（当前时间：{time.strftime('%Y-%m-%d %H:%M:%S')}）")
+
+    st.experimental_rerun()
