@@ -3,14 +3,13 @@ import yfinance as yf
 import pandas as pd
 import ta
 import time
-from datetime import datetime
 
 st.set_page_config(page_title="加密货币分析", layout="wide")
 st.title("💰 加密货币多周期合约分析")
 
-# 自动刷新（每15分钟）
-if int(time.time()) % 900 == 0:
-    st.experimental_rerun()
+# 自动刷新每15分钟
+if int(time.time()) % 900 < 5:
+    st.rerun()
 
 # 币种和周期
 symbols = {
@@ -25,30 +24,37 @@ intervals = {
     "1d": ("24小时", "30d")
 }
 
+# 转换成一维Series的安全函数
+def safe_series(data, index, name):
+    return pd.Series(data.flatten() if hasattr(data, 'flatten') else data, index=index, name=name)
+
 # 计算指标
 def calculate_indicators(df):
     close = df["Close"]
 
-    df['SMA_12'] = pd.Series(
-        ta.trend.SMAIndicator(close=close, window=12).sma_indicator().to_numpy().flatten(),
-        index=df.index
+    df['SMA_12'] = safe_series(
+        ta.trend.SMAIndicator(close=close, window=12).sma_indicator().to_numpy(),
+        index=df.index,
+        name="SMA_12"
     )
-    df['EMA_12'] = pd.Series(
-        ta.trend.EMAIndicator(close=close, window=12).ema_indicator().to_numpy().flatten(),
-        index=df.index
+    df['EMA_12'] = safe_series(
+        ta.trend.EMAIndicator(close=close, window=12).ema_indicator().to_numpy(),
+        index=df.index,
+        name="EMA_12"
     )
-    df['RSI'] = pd.Series(
-        ta.momentum.RSIIndicator(close=close, window=14).rsi().to_numpy().flatten(),
-        index=df.index
+    df['RSI'] = safe_series(
+        ta.momentum.RSIIndicator(close=close, window=14).rsi().to_numpy(),
+        index=df.index,
+        name="RSI"
     )
 
-    macd_ind = ta.trend.MACD(close=close)
-    df['MACD'] = pd.Series(macd_ind.macd().to_numpy().flatten(), index=df.index)
-    df['MACD_signal'] = pd.Series(macd_ind.macd_signal().to_numpy().flatten(), index=df.index)
+    macd = ta.trend.MACD(close=close)
+    df['MACD'] = safe_series(macd.macd().to_numpy(), index=df.index, name="MACD")
+    df['MACD_signal'] = safe_series(macd.macd_signal().to_numpy(), index=df.index, name="MACD_signal")
 
     bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
-    df['BB_upper'] = pd.Series(bb.bollinger_hband().to_numpy().flatten(), index=df.index)
-    df['BB_lower'] = pd.Series(bb.bollinger_lband().to_numpy().flatten(), index=df.index)
+    df['BB_upper'] = safe_series(bb.bollinger_hband().to_numpy(), index=df.index, name="BB_upper")
+    df['BB_lower'] = safe_series(bb.bollinger_lband().to_numpy(), index=df.index, name="BB_lower")
 
     return df
 
@@ -74,28 +80,9 @@ def generate_suggestion(df):
 
     return "，".join(suggestions)
 
-# 显示分析
+# 显示分析结果
 def display_analysis(symbol, name, interval, period):
     try:
         df = yf.download(symbol, interval=interval, period=period)
         if df.empty or 'Close' not in df:
-            st.error(f"❌ 无法获取 {name} 的 {interval} 数据")
-            return
-
-        df = calculate_indicators(df)
-        latest_price = df['Close'].iloc[-1]
-        suggestion = generate_suggestion(df)
-
-        st.subheader(f"{name} - {intervals[interval][0]} 周期")
-        st.metric(label="最新价格", value=f"${latest_price:,.2f}")
-        st.write(f"📊 分析建议：{suggestion}")
-        st.line_chart(df[['Close', 'SMA_12', 'EMA_12']].dropna())
-
-    except Exception as e:
-        st.error(f"❌ 数据获取失败：{e}")
-
-# 页面内容
-for symbol, name in symbols.items():
-    st.markdown(f"## 💰 {name} 分析结果")
-    for interval, (label, period) in intervals.items():
-        display_analysis(symbol, name, interval, period)
+            st
