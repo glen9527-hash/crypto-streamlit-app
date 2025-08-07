@@ -8,11 +8,11 @@ from datetime import datetime
 st.set_page_config(page_title="加密货币分析", layout="wide")
 st.title("💰 加密货币多周期合约分析")
 
-# 设置自动刷新（每15分钟 = 900秒）
+# 自动刷新（每15分钟）
 if int(time.time()) % 900 == 0:
     st.experimental_rerun()
 
-# 币种与周期设置
+# 币种和周期
 symbols = {
     "BTC-USD": "比特币",
     "ETH-USD": "以太坊",
@@ -25,34 +25,25 @@ intervals = {
     "1d": ("24小时", "30d")
 }
 
-# 计算技术指标函数
+# 计算指标
 def calculate_indicators(df):
-    close = df['Close']
+    close = df["Close"]
 
-    sma = ta.trend.SMAIndicator(close=close, window=12).sma_indicator()
-    df['SMA_12'] = sma.squeeze() if hasattr(sma, 'squeeze') else sma
+    df['SMA_12'] = pd.Series(ta.trend.SMAIndicator(close=close, window=12).sma_indicator(), index=df.index)
+    df['EMA_12'] = pd.Series(ta.trend.EMAIndicator(close=close, window=12).ema_indicator(), index=df.index)
+    df['RSI'] = pd.Series(ta.momentum.RSIIndicator(close=close, window=14).rsi(), index=df.index)
 
-    ema = ta.trend.EMAIndicator(close=close, window=12).ema_indicator()
-    df['EMA_12'] = ema.squeeze() if hasattr(ema, 'squeeze') else ema
-
-    rsi = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-    df['RSI'] = rsi.squeeze() if hasattr(rsi, 'squeeze') else rsi
-
-    macd_indicator = ta.trend.MACD(close=close)
-    macd = macd_indicator.macd()
-    macd_signal = macd_indicator.macd_signal()
-    df['MACD'] = macd.squeeze() if hasattr(macd, 'squeeze') else macd
-    df['MACD_signal'] = macd_signal.squeeze() if hasattr(macd_signal, 'squeeze') else macd_signal
+    macd_ind = ta.trend.MACD(close=close)
+    df['MACD'] = pd.Series(macd_ind.macd(), index=df.index)
+    df['MACD_signal'] = pd.Series(macd_ind.macd_signal(), index=df.index)
 
     bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
-    bb_upper = bb.bollinger_hband()
-    bb_lower = bb.bollinger_lband()
-    df['BB_upper'] = bb_upper.squeeze() if hasattr(bb_upper, 'squeeze') else bb_upper
-    df['BB_lower'] = bb_lower.squeeze() if hasattr(bb_lower, 'squeeze') else bb_lower
+    df['BB_upper'] = pd.Series(bb.bollinger_hband(), index=df.index)
+    df['BB_lower'] = pd.Series(bb.bollinger_lband(), index=df.index)
 
     return df
 
-# 分析建议函数
+# 建议逻辑
 def generate_suggestion(df):
     latest = df.iloc[-1]
     suggestions = []
@@ -74,11 +65,11 @@ def generate_suggestion(df):
 
     return "，".join(suggestions)
 
-# 显示分析函数
+# 主分析
 def display_analysis(symbol, name, interval, period):
     try:
         df = yf.download(symbol, interval=interval, period=period)
-        if df.empty:
+        if df.empty or 'Close' not in df:
             st.error(f"❌ 无法获取 {name} 的 {interval} 数据")
             return
 
@@ -94,8 +85,8 @@ def display_analysis(symbol, name, interval, period):
     except Exception as e:
         st.error(f"❌ 数据获取失败：{e}")
 
-# 主体逻辑 - 每个币种遍历周期
+# 主页面结构
 for symbol, name in symbols.items():
-    st.markdown(f"## 💰 {name} 分析結果")
+    st.markdown(f"## 💰 {name} 分析结果")
     for interval, (label, period) in intervals.items():
         display_analysis(symbol, name, interval, period)
