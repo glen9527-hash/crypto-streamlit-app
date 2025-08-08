@@ -1,88 +1,84 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
 import ta
-import time
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="加密货币分析", layout="wide")
-st.title("💰 加密货币多周期合约分析")
+st.set_page_config(page_title="加密货币多周期分析", layout="wide")
 
-# 自动刷新每15分钟
-if int(time.time()) % 900 < 5:
-    st.rerun()
-
-# 币种和周期
-symbols = {
-    "BTC-USD": "比特币",
-    "ETH-USD": "以太坊",
-    "SOL-USD": "Solana"
-}
-intervals = {
-    "15m": ("15分钟", "1d"),
-    "1h": ("1小时", "2d"),
-    "4h": ("4小时", "7d"),
-    "1d": ("24小时", "30d")
-}
-
-# 转换成一维Series的安全函数
-def safe_series(data, index, name):
-    return pd.Series(data.flatten() if hasattr(data, 'flatten') else data, index=index, name=name)
-
-# 计算指标
+# 计算技术指标
 def calculate_indicators(df):
-    close = df["Close"]
+    close = df['Close'].squeeze()  # 转成一维
+    high = df['High'].squeeze()
+    low = df['Low'].squeeze()
 
-    df['SMA_12'] = safe_series(
-        ta.trend.SMAIndicator(close=close, window=12).sma_indicator().to_numpy(),
-        index=df.index,
-        name="SMA_12"
-    )
-    df['EMA_12'] = safe_series(
-        ta.trend.EMAIndicator(close=close, window=12).ema_indicator().to_numpy(),
-        index=df.index,
-        name="EMA_12"
-    )
-    df['RSI'] = safe_series(
-        ta.momentum.RSIIndicator(close=close, window=14).rsi().to_numpy(),
-        index=df.index,
-        name="RSI"
-    )
-
+    df['SMA_12'] = ta.trend.SMAIndicator(close=close, window=12).sma_indicator()
+    df['EMA_12'] = ta.trend.EMAIndicator(close=close, window=12).ema_indicator()
+    df['RSI'] = ta.momentum.RSIIndicator(close=close, window=14).rsi()
     macd = ta.trend.MACD(close=close)
-    df['MACD'] = safe_series(macd.macd().to_numpy(), index=df.index, name="MACD")
-    df['MACD_signal'] = safe_series(macd.macd_signal().to_numpy(), index=df.index, name="MACD_signal")
-
-    bb = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
-    df['BB_upper'] = safe_series(bb.bollinger_hband().to_numpy(), index=df.index, name="BB_upper")
-    df['BB_lower'] = safe_series(bb.bollinger_lband().to_numpy(), index=df.index, name="BB_lower")
-
+    df['MACD'] = macd.macd()
+    df['MACD_signal'] = macd.macd_signal()
+    bb = ta.volatility.BollingerBands(close=close)
+    df['BB_high'] = bb.bollinger_hband()
+    df['BB_low'] = bb.bollinger_lband()
     return df
 
-# 生成建议
-def generate_suggestion(df):
+# 综合分析
+def analyze(df):
     latest = df.iloc[-1]
-    suggestions = []
-
-    if latest['RSI'] < 30:
-        suggestions.append("RSI 显示超卖")
-    elif latest['RSI'] > 70:
-        suggestions.append("RSI 显示超买")
-
+    score = 0
+    if latest['Close'] > latest['SMA_12']:
+        score += 1
     if latest['Close'] > latest['EMA_12']:
-        suggestions.append("价格高于EMA，趋势向上")
-    else:
-        suggestions.append("价格低于EMA，趋势向下")
-
+        score += 1
+    if latest['RSI'] < 30:
+        score += 1
+    elif latest['RSI'] > 70:
+        score -= 1
     if latest['MACD'] > latest['MACD_signal']:
-        suggestions.append("MACD 显示买入信号")
-    else:
-        suggestions.append("MACD 显示卖出信号")
-
-    return "，".join(suggestions)
+        score += 1
+    if latest['Close'] > latest['BB_high']:
+        score -= 1
+    elif latest['Close'] < latest['BB_low']:
+        score += 1
+    prob = (score + 3) / 6 * 100  # 0~100 概率
+    return prob, latest['Close']
 
 # 显示分析结果
 def display_analysis(symbol, name, interval, period):
     try:
         df = yf.download(symbol, interval=interval, period=period)
-        if df.empty or 'Close' not in df:
-            st
+        if df.empty:
+            st.error(f"❌ 无法获取 {name} 数据")
+            return
+        df = calculate_indicators(df)
+        prob, price = analyze(df)
+        st.subheader(f"{name} - {interval} 周期")
+        st.write(f"最新价格：{price:.2f} USD")
+        st.write(f"上涨概率：{prob:.2f}%")
+        st.line_chart(df['Close'])
+    except Exception as e:
+        st.error(f"❌ 数据获取失败：{e}")
+
+st.title("加密货币多周期技术分析")
+st.caption(f"最后刷新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+cryptos = {
+    "BTC-USD": "比特币",
+    "ETH-USD": "以太坊",
+    "SOL-USD": "Solana"
+}
+
+intervals = {
+    "15m": "15分钟",
+    "1h": "1小时",
+    "4h": "4小时",
+    "1d": "24小时"
+}
+
+for symbol, name in cryptos.items():
+    for interval, label in intervals.items():
+        display_analysis(symbol, name, interval, "7d")
+
+# 自动刷新
+st_autorefresh = st.empty()
