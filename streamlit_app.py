@@ -1,114 +1,107 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import yfinance as yf
 import ta
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="加密货币分析", layout="wide")
 
-# 计算技术指标
+# 获取数据
+def get_crypto_data(symbol, interval, period):
+    try:
+        df = yf.download(tickers=symbol, interval=interval, period=period)
+        if df.empty:
+            raise ValueError("未获取到数据")
+        df = df.reset_index()
+        df['close'] = df['Close'].squeeze()  # 转成一维
+        return df
+    except Exception as e:
+        st.error(f"❌ 数据获取失败: {e}")
+        return None
+
+# 计算指标
 def calculate_indicators(df):
     try:
-        close = df['Close']
-        high = df['High']
-        low = df['Low']
+        close = df['close']
 
-        # 确保数据足够，否则填充 NaN
-        def safe_indicator(func, *args, **kwargs):
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception:
-                return pd.Series([np.nan] * len(df), index=df.index)
+        df['SMA_20'] = ta.trend.SMAIndicator(close=close, window=20).sma_indicator()
+        df['EMA_20'] = ta.trend.EMAIndicator(close=close, window=20).ema_indicator()
+        df['RSI_14'] = ta.momentum.RSIIndicator(close=close, window=14).rsi()
 
-        df['SMA_20'] = safe_indicator(ta.trend.SMAIndicator, close, 20).sma_indicator()
-        df['EMA_20'] = safe_indicator(ta.trend.EMAIndicator, close, 20).ema_indicator()
-        df['RSI_14'] = safe_indicator(ta.momentum.RSIIndicator, close, 14).rsi()
-        macd = safe_indicator(ta.trend.MACD, close)
-        if isinstance(macd, ta.trend.MACD):
-            df['MACD'] = macd.macd()
-            df['MACD_signal'] = macd.macd_signal()
-        else:
-            df['MACD'] = np.nan
-            df['MACD_signal'] = np.nan
-        bb = safe_indicator(ta.volatility.BollingerBands, close, 20, 2)
-        if isinstance(bb, ta.volatility.BollingerBands):
-            df['BB_up'] = bb.bollinger_hband()
-            df['BB_low'] = bb.bollinger_lband()
-        else:
-            df['BB_up'] = np.nan
-            df['BB_low'] = np.nan
+        macd = ta.trend.MACD(close)
+        df['MACD'] = macd.macd()
+        df['MACD_signal'] = macd.macd_signal()
+
+        bb = ta.volatility.BollingerBands(close)
+        df['BB_up'] = bb.bollinger_hband()
+        df['BB_low'] = bb.bollinger_lband()
 
         return df
     except Exception as e:
         st.error(f"❌ 指标计算失败: {e}")
-        return df
+        return None
 
-# 获取历史数据
-def get_crypto_data(symbol, interval, period):
+# 综合分析
+def analyze(df):
     try:
-        df = yf.download(symbol, interval=interval, period=period)
-        if df.empty:
-            raise ValueError("返回的数据为空")
-        df = df.reset_index()
-        return df
-    except Exception as e:
-        st.error(f"❌ 数据获取失败: {e}")
-        return pd.DataFrame()
+        last = df.iloc[-1]  # 取最后一行的指标值
 
-# 分析并显示结果
+        score = 0
+        if last['SMA_20'] > last['EMA_20']:
+            score += 1
+        if last['RSI_14'] < 30:
+            score += 1
+        if last['MACD'] > last['MACD_signal']:
+            score += 1
+        if last['close'] < last['BB_low']:
+            score += 1
+
+        if score >= 3:
+            return "建议买入", score / 4
+        elif score <= 1:
+            return "建议卖出", (4 - score) / 4
+        else:
+            return "观望", 0.5
+    except Exception as e:
+        st.error(f"❌ 分析失败: {e}")
+        return "无法分析", 0
+
+# 显示结果
 def display_analysis(symbol, name, interval, period):
-    st.subheader(f"{name} ({symbol}) - {interval} 分析")
     df = get_crypto_data(symbol, interval, period)
-    if df.empty:
-        st.warning("⚠ 无法获取数据")
+    if df is None:
         return
 
     df = calculate_indicators(df)
+    if df is None:
+        return
 
-    # 显示图表
-    st.line_chart(df.set_index('Datetime')['Close'])
+    advice, prob = analyze(df)
 
-    # 买卖建议（简单示例）
-    try:
-        latest = df.iloc[-1]
-        score = 0
-        total = 0
-        if not pd.isna(latest['Close']) and not pd.isna(latest['SMA_20']):
-            score += int(latest['Close'] > latest['SMA_20'])
-            total += 1
-        if not pd.isna(latest['RSI_14']):
-            score += int(latest['RSI_14'] > 50)
-            total += 1
-        if not pd.isna(latest['MACD']) and not pd.isna(latest['MACD_signal']):
-            score += int(latest['MACD'] > latest['MACD_signal'])
-            total += 1
+    st.subheader(f"{name} ({symbol}) - 最新价格: {df['close'].iloc[-1]:.2f} USD")
+    st.write(f"📊 建议: **{advice}** | 概率: **{prob*100:.1f}%**")
+    st.line_chart(df[['close', 'SMA_20', 'EMA_20']])
 
-        if total > 0:
-            prob = round(score / total * 100, 2)
-            st.write(f"📊 上涨概率: {prob}%")
-        else:
-            st.write("📊 无法计算概率（数据不足）")
-    except Exception as e:
-        st.error(f"❌ 分析失败: {e}")
+# 自动刷新
+st_autorefresh = st.experimental_rerun if 'rerun' in dir(st) else None
+if st_autorefresh:
+    st_autorefresh(interval=15 * 60 * 1000, key="refresh")
 
-# 页面布局
-st.title("📈 加密货币多周期分析（实时数据）")
+st.title("📈 加密货币多周期分析")
 
-cryptos = {
-    "BTC-USD": "比特币",
-    "ETH-USD": "以太坊",
-    "SOL-USD": "Solana"
+period_map = {
+    "15m": ("15m", "1d"),
+    "1h": ("1h", "7d"),
+    "4h": ("4h", "1mo"),
+    "1d": ("1d", "3mo")
 }
 
-intervals = [
-    ("15m", "1d"),
-    ("1h", "7d"),
-    ("4h", "1mo"),
-    ("1d", "3mo")
-]
-
-for symbol, name in cryptos.items():
-    for interval, period in intervals:
-        display_analysis(symbol, name, interval, period)
+for label, (interval, period) in period_map.items():
+    st.markdown(f"### ⏱ 周期: {label}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        display_analysis("BTC-USD", "比特币", interval, period)
+    with col2:
+        display_analysis("ETH-USD", "以太坊", interval, period)
+    with col3:
+        display_analysis("SOL-USD", "Solana", interval, period)
