@@ -3,3 +3,5 @@ yfinance
 ta
 matplotlib
 pandas
+numpy
+pytz
