@@ -5,3 +5,4 @@ matplotlib
 pandas
 numpy
 pytz
+pandas_ta
