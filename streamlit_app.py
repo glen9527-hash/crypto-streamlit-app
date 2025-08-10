@@ -13,7 +13,7 @@ st.caption("数据源：yfinance ｜ 自动刷新：每15分钟 ｜ 周期：15m
 
 # ---------- 自动刷新（每15分钟） ----------
 # interval 单位毫秒
-st.experimental_autorefresh(interval=15 * 60 * 1000, key="autorefresh")
+st.autorefresh(interval=15 * 60 * 1000, key="autorefresh")
 
 # ---------- 辅助函数 ----------
 def now_hk():
